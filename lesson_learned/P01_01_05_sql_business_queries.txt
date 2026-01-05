@@ -1,0 +1,1276 @@
+PROJECT 01, DAY 05: SQL BUSINESS QUERIES
+January 5, 2026
+
+BUSINESS CONTEXT
+Ecommerce priorities:
+1.   WHERE IS MONEY COMING FROM ?     - Revenue Optimization
+2.   WHO'S BUYING REPEATEDLY ?        - Customer Retention
+3.   ARE DELIVERIES ON TIME ?         - Operational Efficiency
+4.   WHAT SHOULD WE STOCK ?           - Product Performance
+5.   WHICH REGIONS TO FOCUS ?         - Geographic Expansion
+
+JOB: Translate the into SQL queries that inform decisions
+
+===================================================================
+
+QUERY FRAMEWORK
+
+1. What - The business question
+2. Why - Why this matters to staholders
+3. How - The SQL approach
+4. Insight - What the results tell us
+
+===================================================================
+-------------------------------------------------------------------
+PART 1: REVENUE ANALYSIS (3 QUERIES)
+-------------------------------------------------------------------
+Query 1: Monthly Revenue Trend
+Business Question BQ: Is our revenue GROWING or DECLINING MoM?
+Why: Board meetings, investor updates, planning
+SQL aprroach:
+    -  Join orders + payments
+    -  Group by year and month
+    -  Claculate order count, unique customers, total revenue
+    -  Order chronologically to see trend
+
+''''''
+
+import pandas as pd
+import sqlite3
+
+conn = sqlite3.connect('../data/processed/ecommerce.db')
+
+def run_query(query, title):
+    print(f"\n{'=' * 70}")
+    print(title)
+    print('=' * 70)
+    result = pd.read_sql_query(query, conn)
+    print(result.to_string(index=False))
+    return result
+
+query1 = """
+SELECT 
+    order_year,
+    order_month,
+    COUNT(DISTINCT o.order_id) as total_orders,
+    COUNT(DISTINCT o.customer_id) as unique_customers,
+    ROUND(SUM(p.total_payment_value), 2) as total_revenue,
+    ROUND(AVG(p.total_payment_value), 2) as avg_order_value
+FROM orders o
+JOIN order_payments p ON o.order_id = p.order_id
+GROUP BY order_year, order_month
+ORDER BY order_year, order_month
+"""
+
+result1 = run_query(query1, "QUERY 1: Monthly Revenue Trend")
+
+''''''
+RESULT:
+======================================================================
+QUERY 1: Monthly Revenue Trend
+======================================================================
+ order_year  order_month  total_orders  unique_customers  total_revenue  avg_order_value
+       2016           10           265               265       46566.71           175.72
+       2016           12             1                 1          19.62            19.62
+       2017            1           750               750      127545.67           170.06
+       2017            2          1653              1653      271298.65           164.13
+       2017            3          2546              2546      414369.39           162.75
+       2017            4          2303              2303      390952.18           169.76
+       2017            5          3546              3546      567066.73           159.92
+       2017            6          3135              3135      490225.60           156.37
+       2017            7          3872              3872      566403.93           146.28
+       2017            8          4193              4193      646000.61           154.07
+       2017            9          4150              4150      701169.99           168.96
+       2017           10          4478              4478      751140.27           167.74
+       2017           11          7289              7289     1153528.05           158.26
+       2017           12          5513              5513      843199.17           152.95
+       2018            1          7069              7069     1078606.86           152.58
+       2018            2          6555              6555      966510.88           147.45
+       2018            3          7003              7003     1120678.00           160.03
+       2018            4          6798              6798     1132933.95           166.66
+       2018            5          6749              6749     1128836.69           167.26
+       2018            6          6099              6099     1012090.68           165.94
+       2018            7          6159              6159     1027903.86           166.89
+       2018            8          6351              6351      985414.28           155.16
+
+What to look for:
+
+    -  Which month had PEAK REVENUE ?
+    >>>  November 2017 (month 11) had peak revenue at R$ 1,153,528.05
+    -  Any DECLINING MONTH ?
+    >>>  Yes, August 2018 shows significant decline to R$ 985,414.28 (last recorded month)
+    >>>  This represents approximately 15% drop from the peak
+    -  Seasonal PATTERNS ?
+    >>>  STRONG Q4 pattern: Revenue consistently increases October - November - December.
+    >>>  November Spike: Month 10-11 show the highest rrevenue across both years.
+    >>>  Post-holiday drop: January typically shows lower revenue
+    >>>  Mid-year stability: Months 3-8 show relatively consistent performance.
+
+Business Insight BI:
+Revenue peaked in NOVEMBER 2017 at R$ 1,153,528.05. The data shows a clear seasonal pattern with Q4 (October-December) generating 30-40% higher revenue than other quarters. This indicates iether:
+    >>  Black Friday / holiday shopping behavior (likely given November peak)
+    >>  Year-end purchasing patterns
+However, August 2018 shows concerning decline to R$ 985,414.28, suggesting either:
+    >>  Dataset ends in August 2018 (incomplete month)
+    >>  Actual business slowdown requiring investigation
+
+RECOMMENDATION:
+    Focus marketing spend in Q# to prepare for Q4 surge.
+    Investigate August 2018 decline if it represents complete month data.
+
+Key Metrics ( Stakeholder presentation ):
+    -  Peak Month: November 2017 (R$ 1.15M)
+    -  Average monthly revenue: R$ ~ 800K
+    -  Q4 consistently outeperforms other quarters by 30-40%
+    -  YoY growth: 2017 outperformed 2016 significantly
+
+===================================================================
+
+Query 2: Top 10 Product Categories
+BQ: Which product categories drive our revenue?
+Why it matters: Inventory decisions, marketing budget allocation
+SQL Approach:
+    -  Join order_items + products (to get category names)
+    -  Group by product category
+    -  Calculate: total orders, items sold, revenue, average price
+    -  Order by revenue descending
+    -  Limit to top 10
+
+''''''
+query2 = """
+SELECT 
+    pr.product_category_name_english as category,
+    COUNT(DISTINCT oi.order_id) as total_orders,
+    COUNT(oi.product_id) as items_sold,
+    ROUND(SUM(oi.price), 2) as total_revenue,
+    ROUND(AVG(oi.price), 2) as avg_item_price
+FROM order_items oi
+JOIN products pr ON oi.product_id = pr.product_id
+GROUP BY pr.product_category_name_english
+ORDER BY total_revenue DESC
+LIMIT 10
+"""
+result2 = run_query(query2, "QUERY 2: Top 10 Product Categories by Revenue")
+
+### Analysis to do:
+
+# Calculate revenue concentration
+top10_revenue = result2['total_revenue'].sum()
+total_revenue = pd.read_sql_query(
+    "SELECT SUM(price) as total FROM order_items", 
+    conn
+)['total'][0]
+
+concentration = (top10_revenue / total_revenue) * 100
+print(f"\nTop 10 categories represent {concentration:.1f}% of total revenue")
+
+''''''
+RESULT:
+======================================================================
+QUERY 2: Top 10 Product Categories by Revenue
+======================================================================
+             category  total_orders  items_sold  total_revenue  avg_item_price
+        health_beauty          8836        9670     1258681.34          130.16
+        watches_gifts          5624        5991     1205005.68          201.14
+       bed_bath_table          9417       11115     1036988.68           93.30
+       sports_leisure          7720        8641      988048.97          114.34
+computers_accessories          6689        7827      911954.32          116.51
+      furniture_decor          6449        8334      729762.49           87.56
+           cool_stuff          3632        3796      635290.85          167.36
+           housewares          5884        6964      632248.66           90.79
+                 auto          3897        4235      592720.11          139.96
+         garden_tools          3518        4347      485256.46          111.63
+
+What to look for:
+    -  Revenue concentration (do top 10 = 70% total?)
+    >>>  NO. Top 10 categories represent 62,4% of total revenue.
+    >>>  This indicates MODERATE CONCENTRATION (not extreme risk, but not fully diversified)
+    -  Average item price per category (luxury vs budget)
+    >>>  Luxxury categories: computer_accessories(R$ 116.51), watches_gifts (R$ 201.14)
+    >>>  Mid-range: auto (R$ 139.96), cool_stuff (R$ 167.36), bed_bath_table (R$ 93.30)
+    >>>  Budget: furniture_decor (R$ 87.56), housewares(R$ 90.79)
+    -  Volume vs value (high orders but low revenue = problem)
+    >>> High volume + high vale (ideal): health_beauty (8,836 orders, R$ 1.26M revenue
+    >>>  Balanced: watches_gifts (5,624 orders, R$ 1.26M) - fewer orders but higher AOV
+    >>>  NO MAJOR PROBLEMS DETECTED - volume aligns with revenue across categories
+
+BI:  
+Top 10 categories represent 62.4% of total revenue - below the 70% concentration risk threshold. This indicates a relatively healthy product portfolio with good diversification. The business is NOT overly dependent on a few categories, reducing risk if one category underperforms.
+However, this also means:
+    -  Marketing spend may be too spread out
+    -  Inventory complexity is higher
+    -  Harder to achieve category dominance
+
+Key Findings:
+1. Health and beauty dominance: Highest order volume (8,836) but lower AOV (R$ 138.16)
+Strategy: Upsell opportunities, bundle products to increase basket size
+2. Watches_gifts = VIP category: Lower volume but R$ 201.14 AOV (highest)
+Strategy: Premium positioning, targeted marketing to high-spenders
+3. Computers_accessories: Strong R$ 911,954.32 with R$ 116.51 AOV
+Strategy: Cross-sell accessories with main products
+4. Furniture_decor concern: 6,449 orders but lowest AOV (R$ 87.56)
+Strategy: Review pricing or improve product mix
+
+RECOMMENDATION:
+
+1. Inventory Focus
+    >>>  Prioritize stock for health_beauty, watches_gifts, bed_bath_table (top 3 revenue)
+    >>>  Maintain safety stock for computers_accessories (high margin potential)
+
+2. Marketing budget allocation:
+    >>>  40% to health_beauty (volume driver)
+    >>>  25% to watches_gifts (high-value customers)
+    >>>  20% to bed_bath_table (consistent performer)
+    >>>  15% to emerging categories
+
+3. Risk mitigation:
+    >>> 62.4% concentration is acceptable but monitor
+    >>> Develop 5-7 more categories to reach <50% concentration
+    >>> Focus on furniture_decor improvement (high volume, low value)
+
+4. Pricing Strategy
+    >>> Health_beauty: Bundle deals to increase AOV from R$ 138 → R$ 180
+    >>> Furniture_decor: Premium line launch to boost R$ 87 AOV
+    >>> Watches_gifts: Maintain premium positioning (R$ 201 AOV is excellent)
+
+5. OR JUST FOCUS -PUSH TOP 3 CATEGORIES TOWARD 7% ( Economies of scale )
+
+
+===================================================================
+
+Query 3: Revenue by State
+BQ: Which states are our most valeable markets?
+Why it matters: Regional marketing spend decisions, warehouse placement strategy, expansion planning
+SQL APPROACH:
+    -  Join orders + customers + payments (3-table join)
+    -  Group by customer state
+    -  Claculate: total orders, unique customers, total revenue, average order value, revenue per customer
+    -  Order by total revenue descending
+    -  Limit to top 10 states
+
+''''''
+query3 = """
+SELECT 
+    c.customer_state,
+    COUNT(DISTINCT o.order_id) as total_orders,
+    COUNT(DISTINCT c.customer_unique_id) as unique_customers,
+    ROUND(SUM(p.total_payment_value), 2) as total_revenue,
+    ROUND(AVG(p.total_payment_value), 2) as avg_order_value,
+    ROUND(SUM(p.total_payment_value) / COUNT(DISTINCT c.customer_unique_id), 2) as revenue_per_customer
+FROM orders o
+JOIN customers c ON o.customer_id = c.customer_id
+JOIN order_payments p ON o.order_id = p.order_id
+GROUP BY c.customer_state
+ORDER BY total_revenue DESC
+LIMIT 10
+"""
+
+result3 = run_query(query3, "QUERY 3: Top 10 States by Revenue")
+''''''
+RESULT:
+======================================================================
+QUERY 3: Top 10 States by Revenue
+======================================================================
+customer_state  total_orders  unique_customers  total_revenue  avg_order_value  revenue_per_customer
+            SP         40500             39155     5770266.19           142.48                147.37
+            RJ         12350             11917     2055690.45           166.45                172.50
+            MG         11354             11001     1819277.61           160.23                165.37
+            RS          5345              5168      861802.40           161.24                166.76
+            PR          4923              4769      781919.55           158.83                163.96
+            SC          3546              3449      595208.40           167.85                172.57
+            BA          3256              3158      591270.60           181.59                187.23
+            DF          2080              2019      346146.17           166.42                171.44
+            GO          1957              1895      334294.22           170.82                176.41
+            ES          1995              1928      317682.65           159.24                164.77
+
+What to look for:
+    -  Revenue per customer (lifetime value proxy)
+    >>>  SP: R$ 147.37 per customer (highest volume, moderate LTV)
+    >>>  BA: R$ 187.23 per customer (highest LTV despite lower volume)
+    >>>  SC: R$ 172.57 per customer (strong LTV)
+    >>>  RJ: R$ 172.50 per customer (second highest volume, high LTV)
+    -  States with high orders but low AOV (discount culture)
+    >>>  SP: 40,500 orders but only R$ 142.48 AOV (lowest among top 10)
+         This suggests price-sensitive market or heavy discount usage
+    -  States with few customers but high spending (VIP markets)
+    >>>  BA: Only 3,256 orders but R$ 181.59 AOV (highest)
+    >>>  GO: 1,957 orders but R$ 170.82 AOV (second highest)
+         These are premium markets with higher purchasing power
+BI:
+Sao Paulo dominates with 42% of total revenue (R$ 5.77M from 39,155 customers) but has the LOWEST revenue per customer at R$ 147.37. This indicates:
+    -  High volume, price-sensitive market
+    -  Heavy discount dependency
+    -  Lower customer lifetime value despite volume
+Bahla (BA) represents the opposite opportunity:
+    - Only 3,256 orders (8% of SP volume)
+    -  Highest AOV at R$ 181.59 (+27% vs SP)
+    -  Highest revenue per customer at R$ 187.23 (+27% vs SP)
+    -  Premium market with less price sensitivity
+
+Strategy implication:
+1. SP Strategy: Volume play - focus on retention and upselling (currently only R$ 142 AOV)
+2. BA Strategy: Premium positioning - customers will pay more, invest in high-margin products
+3. SC/RJ Strategy: Balanced markets - good volume AND good LTV, ideal for growth investment
+
+RECOMMENDATION:
+1. Geographic expansion priority:
+    -  Double down on BA - High AOV market, underpenetrated (only 3,256 customers)
+    -  Grow RJ/MG - Large markets with good LTV, not yet saturated
+    -  Fix SP profitability - Reduce discounting, increase AOV through bundles
+2. Warehouse placement:
+    -  Current: Likely SP-focused (volume)
+    -  Opportunity: BA warehouse to reduce delivery costs and capture premium market
+3. Marketing spend allocation:
+    -  50% SP (volume maintenance)
+    -  20% RJ (growth market)
+    -  15% BA (premium market development)
+    -  15% MG/RS (balanced growth)
+===================================================================
+-------------------------------------------------------------------
+PART 2: OPERATIONAL ANALYSIS (3 QUERIES)
+-------------------------------------------------------------------
+Query 4: Delivery Performance by State
+Business Question: Which states have delivery problems?
+Why it matters: Customer satisfaction, retention risk, logistics cost optimization, negative reviews prevention
+SQL Approach:
+    -  Join orders + customers
+    -  Filter: only completed deliveries (delivery_time_days NOT NULL)
+    -  Group by customer state
+    -  Calculate: total orders, avg delivery days, avg delay days, on-time percentage
+    -  Order by avg delivey days descending
+
+''''''
+query4 = """
+SELECT 
+    c.customer_state,
+    COUNT(o.order_id) as total_orders,
+    ROUND(AVG(o.delivery_time_days), 1) as avg_delivery_days,
+    ROUND(AVG(o.delivery_delay_days), 1) as avg_delay_days,
+    ROUND(AVG(CAST(o.on_time_delivery AS FLOAT)) * 100, 1) as on_time_pct
+FROM orders o
+JOIN customers c ON o.customer_id = c.customer_id
+WHERE o.delivery_time_days IS NOT NULL
+GROUP BY c.customer_state
+ORDER BY avg_delivery_days DESC
+LIMIT 15
+"""
+
+result4 = run_query(query4, "QUERY 4: Delivery Performance by State")
+''''''
+RESULT:
+======================================================================
+QUERY 4: Delivery Performance by State
+======================================================================
+customer_state  total_orders  avg_delivery_days  acg_delay_days  on_time_pct
+            RR            41               29.0           -17.3         87.8
+            AP            67               26.7           -19.7         97.0
+            AM           145               26.0           -19.6         97.2
+            AL           397               24.0            -8.7         78.6
+            PA           946               23.3           -14.1         88.8
+            MA           717               21.1            -9.6         82.6
+            SE           335               21.0           -10.0         84.8
+            CE          1279               20.8           -10.8         86.2
+            AC            80               20.6           -20.7         96.3
+            PB           517               20.0           -13.3         89.6
+            PI           476               19.0           -11.3         86.1
+            RO           243               18.9           -20.1         97.1
+            BA          3256               18.9           -10.8         87.8
+            RN           474               18.8           -13.6         90.7
+            PE          1593               18.0           -13.3         90.4
+
+What to look for:
+    -  States with <80% on-time delivery (critical threshold)
+    >>>  AL: AL: 78.6% - BELOW threshold, crisis level
+         No other states in top 15 fall below 80%
+    -  States with >20 day average delivery (customer complaints likely)
+    >>>  RR: 29.0 days (worst performance)
+    >>>  AP: 26.7 days
+    >>>  AM: 26.0 days
+    >>>  AL: 24.0 days
+    >>>  PA: 23.3 days
+         All Northern/Northeastern states - clear regional logistics problem
+    -  States with high negative delay (consistently late)
+    >>>  Negative delay = arriving EARLY (good)
+    >>>  AC: -20.7 days early (excellent)
+    >>>  RO: -20.1 days early
+    >>>  AP: -19.7 days early
+    >>>  AM: -19.6 days early
+         Paradox: These states deliver early on average but have longest absolute delivery times
+BI:
+1. Northern and Northeastern Brazil face severe logistics challenges. Roraima (RR) averages 29 days delivery - 2.4x the national average of ~12 days. However, most states show 85-97% on-time delivery, indicating conservative delivery estimates rather than systemic failure.
+2. Critical finding: Alagoas (AL) is the ONLY state below 80% on-time threshold (78.6%) with 24-day average delivery. This represents 397 orders at risk monthly.
+
+The "early delivery paradox":
+    -  States like AM, AP, AC deliver 19-20 days early on average
+    -  But absolute delivery time is still 26-27 days
+    -  This means: Estimated delivery dates are set at 45-50 days (overly conservative)
+    -  Customer perception problem: "Why does it take a month if you said 50 days?"
+
+RECOMMENDATION:
+1. Immediate action (AL-crisis state):
+    -  Investigate 397 orders in Alagoas
+    -  Partner with regional carrier to open fullfillment point
+    -  Consider temporary expedited shipping subsidy
+    -  Potential revenue at risk: 397 orders x R$ 160 AOV = R$ 63,520/month
+
+2. Northern region strategy:
+    -  Accept 20-25 day delivery as reality
+    -  Adjust customer expectations (currently over-promising)
+    -  Set realistic delivery estimates 25-30 days instead of 45-50 days
+    -  Improve customer satisfaction even with same actual delivery time
+
+3. Marketing approach:
+    -  Highlight "delivered earlier than expected" in Northern states
+    -  Current 97% on-time in AM/AP despite 26-day delivery
+    -  This is a FEATURE if communicated correctly
+
+4. Long-term investment:
+    -  Regional warehouse in Northern hub (Manaus or Belém)
+       Would reduce 26-day delivery to 10-15 days
+    -  Break-even analysis: Cost of warehouse vs. customer acquisition in growing Northern markets
+===================================================================
+
+Query 5: Late Delivery Hotspots
+Business Question: Where are late deliveries concentrated?
+Why it matters: Pinpoint exact problem areas for logistics team intervention, budget allocation for warehouse expansion
+SQL Approach:
+    -  Join orders + customers
+    -  Filter: only orders with delivery delay data
+    -  Group by customer state
+    -  Calculate: total orders, late deliveries count, late percentage, average days late
+    -  Filter: HAVING late percentage > 20% (only probem states)
+    -  Order by late percentage descending
+
+''''''
+query5 = """
+SELECT 
+    c.customer_state,
+    COUNT(o.order_id) as total_orders,
+    SUM(CASE WHEN o.delivery_delay_days > 0 THEN 1 ELSE 0 END) as late_deliveries,
+    ROUND(
+        CAST(SUM(CASE WHEN o.delivery_delay_days > 0 THEN 1 ELSE 0 END) AS FLOAT) / 
+        COUNT(o.order_id) * 100, 
+        1
+    ) as late_pct,
+    ROUND(AVG(CASE WHEN o.delivery_delay_days > 0 THEN o.delivery_delay_days END), 1) as avg_days_late
+FROM orders o
+JOIN customers c ON o.customer_id = c.customer_id
+WHERE o.delivery_delay_days IS NOT NULL
+GROUP BY c.customer_state
+HAVING late_pct > 20
+ORDER BY late_pct DESC
+"""
+
+result5 = run_query(query5, "QUERY 5: States with >20% Late Delivery Rate")
+''''''
+RESULT:
+======================================================================
+QUERY 5: States with >20% Late Delivery Rate
+======================================================================
+customer_state  total_orders  late_deliveries  late_pct  avg_days_late
+            AL           397               85      21.4            9.5
+
+What to look for:
+    -  States over 30% late (crisis level)
+    >>>  None! Only AL appears and it's at 21.4%
+    -  Average days late (is it 2 days or 10 days)
+    >>>  AL: 9.5 days late (when late delivery occurs)
+         This is significant - almost 10 extra days beyond estimate
+    -  Order volume in problem states (business impact size)
+    >>>  AL: 397 total orders, 85 late deliveries
+         Monthly impact: ~85 orders × R$ 160 AOV = R$ 13,600 affected
+
+BI:
+>  Only ONE state (Alagoas - AL) exceeds the 20% late delivery threshold at 21.4%. This affects 85 orders with an average delay of 9.5 days. This is a contained problem, not a systemic crisis.
+>  However, the 9.5-day average delay is severe:
+    -  Customer receives order 9-10 days AFTER promised date
+    -  High likelihood of negative reviews, refund requests, customer service tickets
+    -  Estimated cost: 30% of late orders request refunds = 25 orders × R$ 160 = R$ 4,000 monthly loss
+>  Why AL is unique:
+    -  Not in Northern remote regions (like AM, RR, AP)
+    -  Northeastern coastal state with decent infrastructure
+    -  Suggests carrier-specific problem, not geographic impossibility
+
+RECOMMENDATION:
+Surgical fix for AL:
+1.  Audit current carrier - AL problem is isolated, likely carrier issue not infrastructure
+2.  Test alternative carriers - Split next 100 AL orders across 2-3 carriers, measure performance
+3.  Temporary premium shipping - Subsidize expedited delivery for 30 days, measure churn reduction
+4.  Customer communication - Proactively email AL customers about delivery timeline, set expectations
+
+Prevention strategy:
+    -  Monitor state-level late delivery % weekly
+    -  Alert system: If any state hits 15%, investigate immediately
+    -  Don't wait for 20% threshold - AL likely deteriorated slowly
+
+ROI calculation:
+    >>>  Problem size: 85 late orders/month × R$ 160 = R$ 13,600 revenue at risk
+    >>>  Estimated customer loss: 30% churn from late delivery = R$ 4,080 monthly
+    >>>  Annual impact: R$ 48,960
+    >>>  Solution cost: Alternative carrier might cost +R$ 5-10 per shipment = R$ 2,000-4,000/month
+    >>>  Net benefit: R$ 45,000-47,000 annually
+
+===================================================================
+
+Query 6: Freight Cost Analysis
+Business Question: Which categories have excessive shipping costs?
+Why it matters: Pricing strategy, carrier negotiation, category profitability analysis
+SQL Approach:
+    -  Join order_items + products
+    -  Group by product category
+    -  Filter: HAVING count > 50 (exclude rare categories)
+    -  Calculate: total orders, avg product price, avg frieght, freight as percentage of price
+    -  Order by freight percentage descending
+    -  Limit to top 10
+
+''''''
+query6 = """
+SELECT 
+    pr.product_category_name_english as category,
+    COUNT(oi.order_id) as total_orders,
+    ROUND(AVG(oi.price), 2) as avg_product_price,
+    ROUND(AVG(oi.freight_value), 2) as avg_freight,
+    ROUND(AVG(oi.freight_pct_of_price), 1) as avg_freight_pct
+FROM order_items oi
+JOIN products pr ON oi.product_id = pr.product_id
+GROUP BY pr.product_category_name_english
+HAVING COUNT(oi.order_id) > 50
+ORDER BY avg_freight_pct DESC
+LIMIT 10
+"""
+
+result6 = run_query(query6, "QUERY 6: Categories with Highest Freight Percentage")
+''''''
+RESULT:
+======================================================================
+QUERY 6: Categories with Highest Freight Percentage
+======================================================================
+                category  total_orders  avg_product_price  avg_freight  avg_freight_pct
+            dvds_blu_ray            64              93.74        20.14             83.3
+             electronics          2767              57.91        16.83             68.4
+      christmas_supplies           153              57.52        21.11             67.6
+ fashion_underwear_beach           131              72.84        14.63             56.6
+  signaling_and_security           199             108.09        32.70             54.6
+               telephony          4545              71.21        15.67             50.6
+              food_drink           278              54.60        16.22             49.8
+                  drinks           379              59.18        15.15             42.8
+costruction_tools_garden           238             108.05        22.32             42.5
+              housewares          6964              90.79        20.99             40.3
+
+What to look for:
+    -  Freight >30% of price (margin killer)
+    >>>  DVDs/Blu-ray: 83.3% (EXTREME - freight costs almost as much as product)
+    >>>  Electronics: 68.4%
+    >>>  Christmas supplies: 67.6%
+    >>>  Fashion underwear/beach: 56.6%
+    >>>  Signaling/security: 54.6%
+    >>>  Top 5 categories ALL have freight >50%
+    -  Heavy/bulky items with low prices (appliances, furniture)
+    >>>  Signaling/security: R$ 108 product, R$ 32.70 freight (heavy equipment)
+    >>>  Construction tools: R$ 108 product, R$ 22.32 freight (tools/hardware)
+    >>>  Housewares: R$ 90 product, R$ 20.99 freight (kitchenware, dishes)
+    -  Opportunity to pass cost to customer or optimize packaging
+    >>>  DVDs should NOT cost 83% freight (lightweight, small)
+    >>>  Electronics: High freight despite small size suggests poor carrier rates
+    >>>  Fashion: 56.6% freight for clothing is excessive
+
+BI:
+Six categories have freight costs exceeding 40% of product price, with DVDs/Blu-ray at catastrophic 83.3%. This indicates either:
+1.  Pricing strategy failure - Products priced too low to absorb shipping
+2.  Carrier negotiation failure - Paying retail shipping rates
+3.  Packaging inefficiency - Oversized boxes increasing dimensional weight
+
+Most concerning: Electronics at 68.4% freight
+    -  2,767 orders affected (high volume)
+    -  Average product price: R$ 57.91
+    -  Average freight: R$ 16.83
+    -  Customer pays total: R$ 74.74
+    -  Competitor offering free shipping wins at R$ 75 total
+
+DVDs/Blu-ray problem:
+    -  Should be lightweight, easy to ship
+    -  83.3% freight means R$ 20 freight on R$ 93 product
+    -  Likely: Individual DVD shipping instead of consolidated orders
+    -  Or: Using premium carriers unnecessarily
+
+RECOMMENDATIONS:
+Immediate pricing adjustments:
+1.  DVDs/Blu-ray - Raise product price by 30%, absorb freight, offer "free shipping"
+	Current: R$ 93 product + R$ 20 freight = R$ 113 total
+	New: R$ 121 product, "free shipping" = R$ 121 total
+	Customer perception: Better value (free shipping psychological win)
+2.  Electronics - Bundle strategy
+	Don't ship single R$ 57 item with R$ 16 freight
+	"Buy 2+ electronics, free shipping"
+	Increases average order value, spreads freight cost
+3.  Christmas supplies - Seasonal pricing
+	Renegotiate rates for electronics (2,767 orders = negotiating power)
+	Lightweight categories (DVDs, fashion, electronics) should get volume discounts
+	Current rates suggest no volume discount structure
+
+Carrier negotiations:
+    -  Renegotiate rates for electronics (2,767 orders = negotiating power)
+    -  Lightweight categories (DVDs, fashion, electronics) should get volume discounts
+    -  Current rates suggest no volume discount structure
+
+Packaging optimization:
+    -  Audit: Are DVDs shipped in oversized boxes?
+    -  Electronics: Eliminate unnecessary packaging materials
+    -  Goal: Reduce dimensional weight charges by 20-30%
+
+Category profitability analysis:
+    -  DVDs might be UNPROFITABLE after freight + operations
+    -  Consider: Drop category or require minimum order value
+    -  Focus on categories with <30% freight (health_beauty, watches_gifts from Query 2)
+
+===================================================================
+-------------------------------------------------------------------
+PART 3: CUSTOMER ANALYSIS (2 QUERIES)
+-------------------------------------------------------------------
+Query 7: Customer Segmentation
+BQ: Who are our one-time vs loyal customers?
+Why it matters: Retention campaign targetting, customer acquisition cost (CAC) justification, lifetime value (LTV) projections
+SQL Approach:
+    -  Subquery: Calculate order count and lifetime value per customer
+    -  Main query: Segment customers using CASE WHEN
+          -  1 order    = "One-time"
+          -  2-3 orders = "Repeat"
+          -  4+ orders  = "Loyal"
+
+''''''
+query7 = """
+SELECT 
+    CASE 
+        WHEN order_count = 1 THEN 'One-time'
+        WHEN order_count BETWEEN 2 AND 3 THEN 'Repeat'
+        ELSE 'Loyal'
+    END as customer_segment,
+    COUNT(*) as customer_count,
+    ROUND(AVG(lifetime_value), 2) as avg_lifetime_value,
+    ROUND(SUM(lifetime_value), 2) as total_segment_revenue
+FROM (
+    SELECT 
+        c.customer_unique_id,
+        COUNT(DISTINCT o.order_id) as order_count,
+        SUM(p.total_payment_value) as lifetime_value
+    FROM customers c
+    JOIN orders o ON c.customer_id = o.customer_id
+    JOIN order_payments p ON o.order_id = p.order_id
+    GROUP BY c.customer_unique_id
+) customer_stats
+GROUP BY customer_segment
+ORDER BY avg_lifetime_value DESC
+"""
+
+result7 = run_query(query7, "QUERY 7: Customer Segmentation by Purchase Frequency")
+''''''
+RESULT:
+
+======================================================================
+QUERY 7: Customer Segmentation by Purchase Frequency
+======================================================================
+customer_segment  customer_count  avg_lifetime_value  total_segment_revenue
+           Loyal              47              789.42               37102.97
+          Repeat            2754              300.38              827254.24
+        One-time           90556              160.76            14558104.56
+
+What to look for:
+    -  WHat % are one-time buyers? (Target: <50%)
+    >>>  96.9% are one-time buyers (90,556 out of 93,357 customers)
+    >>>  This is CATASTROPHIC - 97% of customers never return
+    >>>  Target was <50%, actual is nearly 100%
+    -  Difference in LTV between segments (loyal should be 3-5x one-time)
+    >>>  Loyal: R$ 789.42 average LTV
+    >>>  Repeat: R$ 300.38 average LTV
+    >>>  One-time: R$ 160.76 average LTV
+    >>>  Loyal customers are 4.9x more valuable than one-time
+    >>>  This ratio is good, but only 47 loyal customers exist!
+    -  Total revenue from one-time buyers (wasted acquisition spend?)
+    >>>  One-time: R$ 14,558,104.56 (95% of total revenue)
+    >>>  Repeat: R$ 827,254.24 (5.4% of total revenue)
+    >>>  Loyal: R$ 37,102.97 (0.2% of total revenue)
+    >>>  Business is almost entirely dependent on new customer acquisition
+
+BI:
+This is a customer retention CRISIS. 96.9% of customers make only ONE purchase, generating 95% of revenue. The business has essentially no repeat purchase behavior.
+
+What this means:
+	Every R$ 160 in revenue requires acquiring a NEW customer
+	No customer lifetime value - just transaction value
+	Acquisition cost must be <R$ 50 to be profitable (at ~30% margin)
+	Competitors with even 20% repeat rate will outlast us
+
+The 47 loyal customers paradox:
+	Only 47 customers (0.05%) place 4+ orders
+	But they average R$ 789 lifetime value (4.9x one-time)
+	These 47 customers prove: Product/service CAN create loyalty
+	Question: What do these 47 experience that 90,556 don't?
+
+Repeat customers (2,754):
+	3% of customer base
+	Average R$ 300 LTV (1.87x one-time)
+	Generated R$ 827K revenue
+	If we moved 10% of one-time to repeat: +R$ 1.39M annual revenue
+
+RECOMMENDATIONS:
+Immediate retention program:
+1.  Post-purchase email sequence
+    -  Day 7: "How's your order?" (engagement)
+    -  Day 14: "20% off your next purchase" (incentive)
+    -  Day 30: "Customers who bought X also loved Y" (relevance)
+2.  Analyze the 47 loyal customers:
+    -  What categories do they buy?
+    -  What states are they from?
+    -  What's their avg days between purchases?
+    -  Replicate their behavior patterns
+3.  First-repeat purchase incentive:
+    -  25% off second purchase within 60 days
+    -  Cost: R$ 40 discount per customer
+    -  If 5% convert (4,527 customers): R$ 181,080 cost
+    -  Revenue from repeat purchases: 4,527 × R$ 160 = R$ 724,320
+    -  ROI: 4x return on discount investment
+
+Medium-term
+4.  Category-specific retention:
+    -  Health/beauty: Subscribe & save (monthly replenishment)
+    -  Electronics: Accessory recommendations
+    -  Bed/bath: Seasonal refresh campaigns
+5.  Loyalty program:
+    -  Earn 1 point per R$ 10 spent
+    -  100 points = R$ 20 discount
+    -  Gamification: Unlock tiers (Bronze → Silver → Gold)
+
+Long-term strategic question:
+    -  Is 97% one-time purchase rate a business model problem?
+    -  Maybe: Marketplace model attracts deal-seekers, not brand loyalists
+    -  Consider: Own-brand products to build brand loyalty vs. marketplace approach
+
+Expected impact:
+    -  Moving 10% from one-time to repeat (9,055 customers)
+    -  At R$ 300 LTV vs R$ 160 = +R$ 140 per customer
+    -  Total revenue increase: R$ 1,267,700 annually
+    -  This is 8% revenue growth from retention alone
+
+===================================================================
+
+Query 8: Top Customers by Lifetime Value
+BQ: Who are our highest-value customers?
+Why it matters: VIP program design, personalized retention offers, referral program candidates
+SQL Approach:
+    -  Join customers + orders + payments
+    -  Group by customer unique ID and state
+    -  Calculate: order count, lifetime value, avg order value, first order date, last order date
+    -  Order by lifetime value descending
+    -  Limit to top 20
+
+''''''
+query8 = """
+SELECT 
+    c.customer_unique_id,
+    c.customer_state,
+    COUNT(DISTINCT o.order_id) as total_orders,
+    ROUND(SUM(p.total_payment_value), 2) as lifetime_value,
+    ROUND(AVG(p.total_payment_value), 2) as avg_order_value,
+    MIN(o.order_purchase_timestamp) as first_order,
+    MAX(o.order_purchase_timestamp) as last_order
+FROM customers c
+JOIN orders o ON c.customer_id = o.customer_id
+JOIN order_payments p ON o.order_id = p.order_id
+GROUP BY c.customer_unique_id, c.customer_state
+ORDER BY lifetime_value DESC
+LIMIT 20
+"""
+
+result8 = run_query(query8, "QUERY 8: Top 20 Customers by Lifetime Value")
+''''''
+RESULT:
+======================================================================
+QUERY 8: Top 20 Customers by Lifetime Value
+======================================================================
+              customer_unique_id customer_state  total_orders  lifetime_value  avg_order_value         first_order          last_order
+0a0a92112bd4c708ca5fde585afaa872             RJ             1        13664.08         13664.08 2017-09-29 15:24:52 2017-09-29 15:24:52
+da122df9eeddfedc1dc1f5349a1a690c             RJ             2         7571.63          3785.82 2017-04-01 15:58:40 2017-04-01 15:58:41
+763c8b1c9c68a0229c42c9fc6f662b93             ES             1         7274.88          7274.88 2018-07-15 14:49:44 2018-07-15 14:49:44
+dc4802a71eae9be1dd28f5d788ceb526             MS             1         6929.31          6929.31 2017-02-12 20:37:36 2017-02-12 20:37:36
+459bef486812aa25204be022145caa62             ES             1         6922.21          6922.21 2018-07-25 18:10:17 2018-07-25 18:10:17
+ff4159b92c40ebe40454e3e6a7c35ed6             SP             1         6726.66          6726.66 2017-05-24 18:14:34 2017-05-24 18:14:34
+4007669dec559734d6f53e029e360987             MG             1         6081.54          6081.54 2017-11-24 11:03:35 2017-11-24 11:03:35
+eebb5dda148d3893cdaf5b5ca3040ccb             SP             1         4764.34          4764.34 2017-04-18 18:50:13 2017-04-18 18:50:13
+48e1ac109decbb87765a3eade6854098             PB             1         4681.78          4681.78 2018-06-22 12:23:19 2018-06-22 12:23:19
+c8460e4251689ba205045f3ea17884a1             RS             4         4655.91          1163.98 2018-08-07 09:03:02 2018-08-08 14:27:15
+edde2314c6c30e864a128ac95d6b2112             SP             1         4513.32          4513.32 2018-08-03 21:10:16 2018-08-03 21:10:16
+a229eba70ec1c2abef51f04987deb7a5             RJ             1         4445.50          4445.50 2018-05-31 22:57:07 2018-05-31 22:57:07
+edf81e1f3070b9dac83ec83dacdbb9bc             DF             1         4194.76          4194.76 2017-04-18 20:37:26 2017-04-18 20:37:26
+fa562ef24d41361e476e748681810e1e             MG             1         4175.26          4175.26 2018-03-29 10:31:29 2018-03-29 10:31:29
+ca27f3dac28fb1063faddd424c9d95fa             MG             1         4163.51          4163.51 2018-07-29 08:39:48 2018-07-29 08:39:48
+5e713be0853d8986528d7869a0811d2b             PA             1         4042.74          4042.74 2017-02-04 18:54:15 2017-02-04 18:54:15
+58483a1c055dfb600f57c5b867174542             SP             1         4034.44          4034.44 2018-06-05 12:45:17 2018-06-05 12:45:17
+011875f0176909c5cf0b14a9138bb691             SP             1         4016.91          4016.91 2017-03-18 20:08:04 2017-03-18 20:08:04
+f0767ae738c3d90e7b737d7b8b8bb4d1             RJ             1         3979.55          3979.55 2018-05-14 15:15:30 2018-05-14 15:15:30
+bc5e25094a7d51b6aee35236572e64f4             MG             1         3826.80          3826.80 2018-01-26 14:30:21 2018-01-26 14:30:21
+What to look for:
+    -  How many orders do top customers place? (frequency indicator)
+    >>>  Top customer: R$ 13,664 LTV but only 1 order (one-time whale purchase)
+    >>>  2nd place: R$ 7,571 LTV across 2 orders
+    >>>  Most top-20 customers: Only 1 order each
+    >>>  Exception: 10th place customer made 4 orders (R$ 4,655 LTV)
+    -  Time between first and last order (retention success)
+    >>>  10th place customer (4 orders): August 7-8, 2018 (1 day apart!)
+    >>>  This isn't retention - this is bulk purchasing in short timeframe
+    >>>  2nd place: April 1, 2017 same-day double order (seconds apart)
+    >>>  No true long-term retention in top 20
+    -  Geographic concentration (are VIPs from specific states?)
+    >>>  RJ: 3 customers (15%)
+    >>>  SP: 3 customers (15%)
+    >>>  MG: 3 customers (15%)
+    >>>  ES: 2 customers (10%)
+         Relatively distributed, no single state dominates VIP segment
+
+BI:
+The 'top customers' aren't loyal customers - they're single-transaction whales. 18 out of 20 made only ONE purchase. The two 'repeat' customers made multiple orders within hours/days, not across months. 
+
+This reveals fundamental problem:
+    >>>  High LTV comes from large one-time orders, not retention
+    >>>  Top customer spent R$ 13,664 in ONE order (September 2017)
+    >>>  No indication they'll ever return
+    >>>  This is B2B bulk purchase behavior, not loyal consumer behavior
+
+The 4-order customer (10th place) analysis:
+    >>>  R$ 4,655 total across 4 orders = R$ 1,163 per order
+    >>>  But all 4 orders on August 7-8, 2018 (consecutive days)
+    >>>  Likely: Large purchase split across multiple transactions for payment processing
+    >>>  Not retention: Just transaction splitting
+
+Geographic insight:
+    >>>  RJ, SP, MG account for 45% of top 20
+    >>>  But these are also highest population states (expected)
+    >>>  No "premium state" concentration like BA (which had highest AOV in Query 3)
+    >>>  VIP customers are random, not targetable by geography
+
+RECOMMENDATIONS:
+Redefine "VIP program" strategy:
+1.  Current thinking (WRONG): Target high-LTV customers for retention
+	Problem: They're one-time purchasers who happen to spend a lot
+	They won't respond to loyalty programs
+2.  Correct approach: Target FREQUENCY, not just value
+	The 47 "Loyal" customers from Query 7 (4+ orders) are true VIPs
+	Not the R$ 13K one-time purchasers
+	Focus on customers who've made 2+ purchases
+3.  VIP program criteria (revised):
+	Tier 1 (Bronze): 2 purchases within 90 days
+	Tier 2 (Silver): 3 purchases within 180 days
+	Tier 3 (Gold): 4+ purchases within 365 days
+	Benefits: Early access, exclusive discounts, free express shipping
+
+Whale customer strategy (separate from VIP):
+	Large one-time orders (>R$ 4,000) get white-glove service
+	Personal account manager for 30 days post-purchase
+	Goal: Convert them from bulk purchase to repeat behavior
+	Even if they buy R$ 1,000 second order, that's success
+
+Referral program targeting:
+	Don't target top 20 LTV customers (they won't refer - one-time buyers)
+	Target the 47 "Loyal" customers with 4+ orders
+	They're engaged, they like the product, they're the natural advocates
+	Offer: R$ 50 credit for each referred customer who makes purchase
+
+Why this matters:
+    -  Top 20 customers = R$ 106,920 total LTV
+    -  But they represent 20 one-time transactions, not scalable
+    -  The 47 loyal customers = R$ 37,102 total
+    -  But they represent repeatable behavior pattern that can be scaled
+    -  Would you rather have 1,000 one-time R$ 5,000 purchasers or 1,000 loyal R$ 789 purchasers?
+    -  Answer: Loyal customers (R$ 789 × 1,000 = R$ 789K with retention)
+
+===================================================================
+-------------------------------------------------------------------
+PART 4: BEHAVIORAL ANALYSIS (2 QUERIES)
+-------------------------------------------------------------------
+
+Query 9: Order Patterns by Day of Week
+BQ: When do customers prefer to shop?
+Why it matters: Marketing email timing, flash sale scheduling, support staffing, inventory preparation
+SQL Approach:
+    -  Join orders + payments
+    -  Group by order_day_of_week (0=Monday, 6=SUnday)
+    -  Use CASE to convert numbers to day names
+    -  Calculate: total orders, total revenue, avg order value
+    -  Order by day of week
+
+''''''
+query9 = """
+SELECT 
+    order_day_of_week,
+    CASE order_day_of_week
+        WHEN 0 THEN 'Monday'
+        WHEN 1 THEN 'Tuesday'
+        WHEN 2 THEN 'Wednesday'
+        WHEN 3 THEN 'Thursday'
+        WHEN 4 THEN 'Friday'
+        WHEN 5 THEN 'Saturday'
+        WHEN 6 THEN 'Sunday'
+    END as day_name,
+    COUNT(DISTINCT o.order_id) as total_orders,
+    ROUND(SUM(p.total_payment_value), 2) as total_revenue,
+    ROUND(AVG(p.total_payment_value), 2) as avg_order_value
+FROM orders o
+JOIN order_payments p ON o.order_id = p.order_id
+GROUP BY order_day_of_week
+ORDER BY order_day_of_week
+"""
+
+result9 = run_query(query9, "QUERY 9: Order Patterns by Day of Week")
+''''''
+RESULT:
+======================================================================
+QUERY 9: Order Patterns by Day of Week
+======================================================================
+ order_day_of_week  day_name  total_orders  total_revenue  avg_order_value
+                 0    Monday         15701     2530591.86           161.17
+                 1   Tuesday         15503     2474065.60           159.59
+                 2 Wednesday         15076     2396624.55           158.97
+                 3  Thursday         14322     2284158.44           159.49
+                 4    Friday         13685     2222878.71           162.43
+                 5  Saturday         10555     1706107.53           161.64
+
+What to look for:
+    -  Peak day (send promotions day before)
+    >>>  Monday: 15,701 orders
+    >>>  Tuesday: 15,503 orders
+    >>>  Wednesday: 15,076 orders
+         Those are the peak days
+    -  Slowest day (maintenance window, low ad spend)
+    >>>  Weekend significant slower (10,555 orders on Saturday)
+    -  Weekend vs weekday patterns
+    >>>  10,555 orders vs 14,857 orders average
+
+BI:
+Customers strongly prefer weekday shopping, with Monday-Wednesday generating 46% of weekly orders. Saturday drops 33% vs Monday.
+This indicates:
+    -  Office/desk browsing during work hours (not leisure weekend shopping)
+    -  Desktop/laptop usage (not mobile casual browsing)
+    -  Planned purchasing behavior (weeday routine) not impluse (weekend)
+Counter-intuitive finding:
+    -  Most B2C ecommerce peaks on weekends (leisure time)
+    -  This platform pekas on weekdays (work hours)
+    -  Suggests: Professional/work-related purchasing or desk-browsing behavior
+
+Revenue consistency:
+Average order vale is stable (R$ 158-162) across all days
+This means:
+    -  Lower Saturday volume isn't due to smaller orders
+    -  Simply fewer customers shopping, not changed behavior
+
+RECOMMENDATIONS:
+Marketing calendar optimization:
+1.  Flash sales timing
+	Launch Sunday evening (for Monday morning browse)
+	End Thursday (capture Mon-Wed-Thu peak)
+	Avoid Friday-Saturday launches (lower engagement)
+2.  Email campaign schedule:
+	Monday 8 AM: "Start your week with..." (catches desk-browsing)
+	Wednesday 2 PM: "Mid-week deals..." (maintains momentum)
+we	Avoid Saturday/Sunday sends (low engagement + low conversion)
+3. Ad spend allocation:
+	40% Monday-Tuesday
+	30% Wednesday-Thursday
+	20% Friday
+	10% Saturday
+	No Sunday (reallocate budget to Monday)
+
+Operational planning:
+4.  Customer support staffing:
+	Peak staffing Monday-Wednesday
+	Reduced hours Saturday (lower volume)
+	Sunday: Skeleton crew or chatbot only
+5.  Inventory preparation:
+	Weekend is packing time (lower order volume)
+	Monday morning: peak fullfillment demand
+	Warehouse prep Sunday night for Monday surge
+6.  Site maintenance window:
+	Saturday late evening (lowest traffic)
+	Never Monday morning (peak time)
+
+Growth opportunity - Weekend Shopping:
+    -  Current Saturday: 10,555 orders (71% of Monday), if we capture leisure shoppers, then:
+          -  +29% volume
+	  -  +4,300 orders weekly = +223,600 orders annually
+    -  Strategy:
+          -  Mobile app optimization (weekend = mobile usage)
+	  -  Weekend-specificc promotions: "Lazy Saturday Deals"
+
+Hypothesis testings:
+	Is weekday preference due to product mix (B2B items)?
+	Is it due to payment methods (boleto = work hours banking)?
+	Is it cultural (Brazilian e-commerce behavior)?
+	Test: Saturday-only 20% discount to measure price elasticity
+    
+===================================================================
+
+Query 10: Payment Method Preferences
+BQ: How do customers prefer to pay?
+WHy it matters: Payment gateway priorities, installment strategy, checkout optimization, fraud prevention focus
+SQL Approach:
+    -  Use orders-payments table (already aggregated)
+    -  Group by payment_methods
+    -  Calculate: order count, total revenue, avg order value, avg installments
+    -  Order by order count descending
+    -  Limit to top 10
+
+''''''
+query10 = """
+SELECT 
+    payment_methods,
+    COUNT(order_id) as total_orders,
+    ROUND(SUM(total_payment_value), 2) as total_revenue,
+    ROUND(AVG(total_payment_value), 2) as avg_order_value,
+    ROUND(AVG(max_installments), 1) as avg_installments
+FROM order_payments
+GROUP BY payment_methods
+ORDER BY total_orders DESC
+LIMIT 10
+"""
+
+result10 = run_query(query10, "QUERY 10: Payment Method Analysis")
+''''''
+RESULT:
+======================================================================
+QUERY 10: Payment Method Analysis
+======================================================================
+        payment_methods  total_orders  total_revenue  avg_order_value  avg_installments
+            credit_card         74259    12397278.59           166.95               3.5
+                 boleto         19784     2869361.27           145.03               1.0
+                voucher          1621      185422.28           114.39               1.0
+             debit_card          1527      217939.79           142.72               1.0
+   credit_card, voucher          1127      164566.17           146.02               2.2
+   voucher, credit_card          1118      174151.20           155.77               2.1
+            not_defined             3           0.00             0.00               1.0
+credit_card, debit_card             1         152.82           152.82               3.0
+
+What to look for:
+    -  Dominant payment method (ensure gateway uptime)
+    >>>  Credit card: 74,259 orders (76.5% total)
+    >>>  Boleto: 19,784 orders (20.4%)
+    >>>  All others: <2,000 orders each (<2%)
+	 Credit card is overwhlmingly dominant
+    -  Installment usage (credit culture indicator)
+    >>>  Credit card average: 3.5 installments
+    >>>  Mixed (credit + voucher: 2.2 installments
+    >>>  Boleto/debt/voucher: 1.0 installment (no installment option)
+    -  Multiple payment methods per order (complex checkout?)
+    >>>  2,245 orders use multiple payment methods (2.3% of total)
+    >>>  Credit + voucher: 1,127 + 1,118 = 2,245 orders
+    >>>  Credit + debt: 1 order (very rare)
+         Voucher used to split payment, not debit
+
+BI:
+Credit card dominates with 76.5% of orders, averaging 3.5 installments. This reveals Brazilian consumer behavior: preferência for spreading payments over time rather than paying upfront.
+Installment insight:
+	3.5 installments means average customer pays over 3-4 months
+	On R$ 160 average order = ~R$ 45-50 per month payments
+	Makes higher-priced items accessible (R$ 500 item = R$ 142/month x 3.5)
+	This is why credit card dominates boleto (which is one-time payment)
+
+Boleto (20% of orders) characteristics:
+	Lower AOV: R$ 145 vs R$ 166 credit card
+	No installments (immediate payment or 3-day bank processing)
+	Preferred by: Unbanked'underbanked, credit-averse, or privacy-conscious
+	Strategic segment - don't eliminate despite lower AOV
+
+Voucher usage pattern:
+	2,245 orders use credit + voucher combination
+	Average order value R$ 146-155 (similar to boleto)
+	Used for: Promotional discounts, loyalty rewards, gift cards
+	2.2 installment average suggest:
+	    -  Voucher covers part, credit card covers rest
+
+"Not-defined" anomaly:
+	-  3 orders with R$ 0 payment value:
+		-  Likely: Test orders, cancelled orders, or data errors
+		-  Insignificant volume, ignore
+
+RECOMMENDATION:
+Payment gateway priorities:
+1.  Credit card uptime is CRITICAL:
+	76.5% of revenue depends on it
+	99.9% uptime requirement (cost of downtime = 76% revenue loss)
+	Have backup process ready
+	Monitor gateway performance hourly, not daily
+2.  Installment optimization:
+	Current: 3.5 installment average:
+		-  Test offer: 6-10 installments on orders R$ 500
+		-  Psychology: "R$ 50/month" sounds better than "R$ 500"
+		-  Expected: Higher AOV on larger purchases
+3.  Boleto retention
+	Don't eliminate despite 20% lower AOV
+	20% of customers (19,784 orders) prefer it
+	Cost to process boleto: ~ R$ 2-3
+	Still profitable at R$ 145 AOV with 30% margins
+
+Checkout optimization:
+4.  Simplify payment flow:
+	97.7% use single payment method
+	Default to single payment, hide "split payment" option
+	Multi_payment creates friction for 97.7% to serve 2.3%
+5.  Installment messaging:
+	Don't show "R$ 160" price:
+		-  Show "3 x R$ 53.33 interes-free" prominently
+		-  Increases perceived affordability
+		-  A/B test: Installment-first pricing
+6.  Voucher strategy:
+	2,245 orders use vouchers (2.3%), but likely higher abandonment rate when vouchers fail:
+		-  Ensiure voucher system is rock-solid
+		-  Auto-apply available vouchers at checkout
+
+Fraud prevention focus:
+7.  Credit card fraud monitoring:
+	76,5% of transactions are credit card
+	Higher fraud risk than boleto (which is prepaid)
+	Implement velocity checks, geolocation matching
+	False positive rate target: <1% (to avoid rejecting good orders)
+
+International expansion consideration:
+    -  Credit card + installments is Latin America pattern
+    -  If expanding to US/Europe: Expect different payment preferences
+		-  US: Credit cards but fewer installments
+		-  Europe:  Bank transfers, SEPA, local payment methods
+
+Revenue Impact calculation:
+    -  Current: 74,259 credit card orders x R$ 166.95 AOV - R$ 12.39M
+    -  If credit card gateway fails for 1 hour during peak (MOnday 10 AM):
+		-  Hourly loss: R$ 12.39M / 365 / 24 = R$ 1,414/hour
+		-  1 hour downtime = R$ 1,414 lost revenue
+    -  Backup processor cost: R$ 500/month:
+		-  Single 1-hour outage pays for 3 months of backup
+
+
+===================================================================
+
+SUMMARY: KEY INSIGHTS ACROSS ALL QUERIES
+
+Revenue Patterns:
+	Q4 seasonal spike (November peak)
+	Top 10 categories = 62.4% revenue (healthy diversification)
+	SP dominates volume but BA has higher customer value
+
+Operational Challenges:
+	Northern states: 20-30 day delivery (but 90%+ on-time due to conservative estimates)
+	Only AL below 80% on-time threshold (contained problem)
+	6 categories have >40% freight costs (pricing crisis)
+
+Customer Retention CRISIS:
+	96.9% one-time buyers - THE BIGGEST PROBLEM
+	Top "VIP" customers are one-time whales, not loyal repeaters
+	Moving 10% to repeat would add R$ 1.26M annual revenue
+
+Behavioral Insights:
+	Weekday shopping preference (office browsing pattern)
+	Credit card + installments = 76.5% of orders (credit culture)
+	3.5 installment average = payment spreading behavior
+
+Top 3 Priorities:
+	Fix retention - 97% one-time buyer rate is unsustainable
+	Fix freight costs - 6 categories losing money on shipping
+	Optimize AL delivery - Only problem state, easy surgical fix
+
+===================================================================
+
+SAVE QUERIES TO FILE
+
+queries_sql = """-- E-COMMERCE ANALYSIS SQL QUERIES
+-- Database: ecommerce.db
+-- Date: January 5, 2026
+
+-- QUERY 1: Monthly Revenue Trend
+{q1}
+
+-- QUERY 2: Top 10 Product Categories
+{q2}
+
+-- QUERY 3: Revenue by State
+{q3}
+
+-- QUERY 4: Delivery Performance by State
+{q4}
+
+-- QUERY 5: Late Delivery Hotspots
+{q5}
+
+-- QUERY 6: Freight Cost Analysis
+{q6}
+
+-- QUERY 7: Customer Segmentation
+{q7}
+
+-- QUERY 8: Top 20 Customers
+{q8}
+
+-- QUERY 9: Order Patterns by Day
+{q9}
+
+-- QUERY 10: Payment Methods
+{q10}
+""".format(
+    q1=query1, q2=query2, q3=query3, q4=query4, q5=query5,
+    q6=query6, q7=query7, q8=query8, q9=query9, q10=query10
+)
+
+with open('../sql/business_queries.sql', 'w') as f:
+    f.write(queries_sql)
+
+print("\nAll queries saved to: sql/business_queries.sql")
+
+conn.close()
+
+===================================================================
+
+FINAL SUMMARY
+
+print("\n" + "=" * 70)
+print("DAY 5 COMPLETE")
+print("=" * 70)
+
+print("\nAccomplishments:")
+print("  1. Wrote 10 business SQL queries")
+print("  2. Covered revenue, operations, customers, behavior")
+print("  3. Each query answers specific business question")
+print("  4. Saved to sql/business_queries.sql")
+
+print("\nSQL Skills Demonstrated:")
+print("  - JOINs (2-3 table joins)")
+print("  - Aggregations (SUM, COUNT, AVG)")
+print("  - GROUP BY with multiple columns")
+print("  - CASE statements for categorization")
+print("  - Subqueries (Query 7)")
+print("  - HAVING clause for post-aggregation filtering")
+
+print("\nNext Steps (Day 6):")
+print("  - Advanced SQL (CTEs, window functions)")
+print("  - Running totals, rankings")
+print("  - Cohort analysis")
+print("  - 5 more complex queries")
+
+RESULT:
+======================================================================
+DAY 5 COMPLETE
+======================================================================
+
+Accomplishments:
+  1. Wrote 10 business SQL queries
+  2. Covered revenue, operations, customers, behavior
+  3. Each query answers specific business question
+  4. Saved to sql/business_queries.sql
+
+SQL Skills Demonstrated:
+  - JOINs (2-3 table joins)
+  - Aggregations (SUM, COUNT, AVG)
+  - GROUP BY with multiple columns
+  - CASE statements for categorization
+  - Subqueries (Query 7)
+  - HAVING clause for post-aggregation filtering
+
+Next Steps (Day 6):
+  - Advanced SQL (CTEs, window functions)
+  - Running totals, rankings
+  - Cohort analysis
+  - 5 more complex queries
