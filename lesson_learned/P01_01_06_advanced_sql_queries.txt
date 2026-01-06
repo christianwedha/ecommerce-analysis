@@ -1,0 +1,682 @@
+PROJECT 01 - DAY 06: ADVANCED SQL QUERIES
+Date: January 6, 2026
+Goal: Master advanced SQL techniques (CTEs, window functions, rankings)
+Time: 5-6 hours
+
+SETUP
+bashcd ecommerce-analysis
+venv\Scripts\activate
+Create new notebook: notebooks/05_advanced_sql.ipynb
+
+PART 1: ENVIRONMENT SETUP (15 minutes)
+python# CELL 1: Imports and connection
+import pandas as pd
+import sqlite3
+import warnings
+warnings.filterwarnings('ignore')
+
+# Set display options
+pd.set_option('display.max_columns', None)
+pd.set_option('display.max_rows', 100)
+
+print("=" * 70)
+print("       DAY 6: ADVANCED SQL QUERIES")
+print("=" * 70)
+
+# Connect to database
+conn = sqlite3.connect('../data/processed/ecommerce.db')
+
+def run_query(query, title):
+    """Execute query and display results"""
+    print(f"\n{'=' * 70}")
+    print(title)
+    print('=' * 70)
+    result = pd.read_sql_query(query, conn)
+    print(result.to_string(index=False))
+    return result
+
+print("\nDatabase connection established")
+What to pay attention to:
+
+Double-check database path: ../data/processed/ecommerce.db (two dots for parent directory)
+Function run_query() is reusable for all queries
+warnings.filterwarnings('ignore') prevents pandas warnings from cluttering output
+
+
+QUERY 11: RUNNING TOTAL REVENUE BY MONTH
+Business Context
+Business question: What is our cumulative revenue growth over time?
+Why it matters:
+
+Board meetings require YTD (year-to-date) revenue figures
+Investors want to see progressive growth, not just monthly snapshots
+Finance needs cumulative numbers for forecasting and budgeting
+Identifies growth acceleration or deceleration trends
+
+SQL approach:
+
+Join orders + payments to get revenue per order
+Group by year and month to get monthly revenue
+Use window function SUM() OVER (ORDER BY ...) to calculate running total
+Running total means: Jan revenue + Feb revenue + Mar revenue + ... (cumulative)
+
+What to look for in results:
+
+Is running total always increasing? (It should be, revenue is cumulative)
+Any months where growth rate slows down? (flat sections in cumulative curve)
+Compare monthly revenue vs running total to see contribution percentage
+
+
+python# CELL 2: Query 11 - Running Total
+query11 = """
+SELECT 
+    order_year,
+    order_month,
+    ROUND(SUM(p.total_payment_value), 2) as monthly_revenue,
+    ROUND(SUM(SUM(p.total_payment_value)) OVER (
+        ORDER BY order_year, order_month 
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ), 2) as running_total_revenue
+FROM orders o
+JOIN order_payments p ON o.order_id = p.order_id
+GROUP BY order_year, order_month
+ORDER BY order_year, order_month
+"""
+
+result11 = run_query(query11, "QUERY 11: Running Total Revenue by Month")
+What to pay attention to when writing:
+
+SUM(SUM(...)): Inner SUM aggregates monthly revenue, outer SUM calculates running total
+OVER (ORDER BY year, month): Window function orders by time
+ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW: Means "sum everything from start until current row"
+Must use GROUP BY before window function can operate on aggregated data
+
+
+QUERY 12: CUSTOMER LIFETIME VALUE SEGMENTATION (CTE)
+Business Context
+Business question: Which customers are high-value vs low-value, and how many are in each segment?
+Why it matters:
+
+Marketing budget should focus on high-value customers (retention) vs low-value (upsell)
+Loyalty programs should reward high-value customers differently
+Customer service prioritization (VIP support for high-value)
+Enables targeted retention campaigns based on segment characteristics
+
+SQL approach:
+
+Step 1 (CTE): Calculate LTV per customer (total revenue they've generated)
+Step 2 (CTE): Segment customers using CASE WHEN (High: 1000+, Medium: 500-999, Low: <500)
+Step 3 (Main query): Aggregate by segment to get counts and averages
+CTEs make complex multi-step logic readable and maintainable
+
+What to look for in results:
+
+How many customers in each segment? (Distribution)
+Average LTV per segment (are thresholds set correctly?)
+Total revenue from each segment (does High segment dominate?)
+Segment ratios (ideally 20% High, 30% Medium, 50% Low - Pareto principle)
+
+
+python# CELL 3: Query 12 - Customer LTV Segmentation
+query12 = """
+WITH customer_ltv AS (
+    SELECT 
+        c.customer_unique_id,
+        c.customer_state,
+        COUNT(DISTINCT o.order_id) as total_orders,
+        ROUND(SUM(p.total_payment_value), 2) as lifetime_value,
+        ROUND(AVG(p.total_payment_value), 2) as avg_order_value
+    FROM customers c
+    JOIN orders o ON c.customer_id = o.customer_id
+    JOIN order_payments p ON o.order_id = p.order_id
+    GROUP BY c.customer_unique_id, c.customer_state
+),
+ltv_segments AS (
+    SELECT 
+        customer_unique_id,
+        customer_state,
+        total_orders,
+        lifetime_value,
+        avg_order_value,
+        CASE 
+            WHEN lifetime_value >= 1000 THEN 'High Value'
+            WHEN lifetime_value >= 500 THEN 'Medium Value'
+            ELSE 'Low Value'
+        END as value_segment
+    FROM customer_ltv
+)
+SELECT 
+    value_segment,
+    COUNT(*) as customer_count,
+    ROUND(AVG(lifetime_value), 2) as avg_ltv,
+    ROUND(AVG(total_orders), 2) as avg_orders,
+    ROUND(SUM(lifetime_value), 2) as total_segment_revenue
+FROM ltv_segments
+GROUP BY value_segment
+ORDER BY avg_ltv DESC
+"""
+
+result12 = run_query(query12, "QUERY 12: Customer Value Segmentation")
+What to pay attention to when writing:
+
+WITH customer_ltv AS (...): First CTE calculates base metrics
+ltv_segments AS (...): Second CTE adds segmentation logic
+CTEs are comma-separated, no semicolons between them
+Main query references CTE name like a table: FROM ltv_segments
+CASE WHEN >= 1000 checks are ordered high to low (first match wins)
+Must GROUP BY in main query after CTEs to aggregate segments
+
+
+QUERY 13: MONTHLY CUSTOMER ACQUISITION COHORTS
+Business Context
+Business question: How many new customers did we acquire each month, and what's the cumulative total?
+Why it matters:
+
+Measures marketing effectiveness (customer acquisition)
+Identifies seasonal patterns in customer acquisition
+Required for cohort retention analysis (next step after acquisition)
+Helps forecast customer base growth
+Informs CAC (customer acquisition cost) analysis
+
+SQL approach:
+
+Use MIN(order_purchase_timestamp) to find each customer's first order date
+Extract year-month from first order date to create cohort
+Group by cohort month to count new customers
+Use window function to calculate cumulative customer count over time
+
+What to look for in results:
+
+Which months had highest customer acquisition? (marketing campaigns?)
+Is acquisition growing or declining over time?
+Cumulative customer count should steadily increase (unless negative churn)
+Compare to monthly revenue (Query 11) - do more customers = more revenue?
+
+
+python# CELL 4: Query 13 - Customer Acquisition Cohorts
+query13 = """
+WITH first_purchase AS (
+    SELECT 
+        c.customer_unique_id,
+        MIN(o.order_purchase_timestamp) as first_order_date,
+        strftime('%Y-%m', MIN(o.order_purchase_timestamp)) as cohort_month
+    FROM customers c
+    JOIN orders o ON c.customer_id = o.customer_id
+    GROUP BY c.customer_unique_id
+)
+SELECT 
+    cohort_month,
+    COUNT(DISTINCT customer_unique_id) as customers_acquired,
+    SUM(COUNT(DISTINCT customer_unique_id)) OVER (
+        ORDER BY cohort_month
+    ) as cumulative_customers
+FROM first_purchase
+GROUP BY cohort_month
+ORDER BY cohort_month
+"""
+
+result13 = run_query(query13, "QUERY 13: Monthly Customer Acquisition Cohorts")
+What to pay attention to when writing:
+
+MIN(order_purchase_timestamp): Finds first order for each customer
+strftime('%Y-%m', ...): SQLite date formatting (format: 'YYYY-MM')
+COUNT(DISTINCT customer_unique_id): Ensures unique customer count (not order count)
+SUM(COUNT(...)) OVER (ORDER BY month): Running sum of customers acquired
+CTE simplifies logic: Step 1 = find first order, Step 2 = aggregate by cohort
+
+
+QUERY 14: ORDER BASKET SIZE ANALYSIS
+Business Context
+Business question: How many items do customers typically buy per order, and what's the distribution?
+Why it matters:
+
+Identifies cross-sell opportunities (if most orders = 1 item, push bundles)
+Informs inventory management (pack multi-item orders differently)
+Reveals customer behavior (impulsive single-item vs planned multi-item)
+Helps set free shipping thresholds (e.g., "free shipping on 3+ items")
+Average order value differs by basket size (used for upsell strategy)
+
+SQL approach:
+
+Subquery: Count distinct products per order (basket size)
+Main query: Categorize basket sizes (1 item, 2-3 items, 4-5 items, 6+)
+Calculate order count, average order value, total revenue per basket size
+Use window function to calculate percentage of total orders
+
+What to look for in results:
+
+What percentage of orders are single-item? (High % = cross-sell opportunity)
+Do larger baskets have proportionally higher revenue? (They should)
+Is there a drop-off point? (e.g., few orders with 6+ items = threshold)
+Compare average order value across basket sizes
+
+
+python# CELL 5: Query 14 - Basket Size Analysis
+query14 = """
+WITH order_size AS (
+    SELECT 
+        order_id,
+        COUNT(DISTINCT product_id) as items_count,
+        ROUND(SUM(price), 2) as order_value
+    FROM order_items
+    GROUP BY order_id
+)
+SELECT 
+    CASE 
+        WHEN items_count = 1 THEN '1 item'
+        WHEN items_count BETWEEN 2 AND 3 THEN '2-3 items'
+        WHEN items_count BETWEEN 4 AND 5 THEN '4-5 items'
+        ELSE '6+ items'
+    END as basket_size,
+    COUNT(*) as order_count,
+    ROUND(AVG(order_value), 2) as avg_order_value,
+    ROUND(SUM(order_value), 2) as total_revenue,
+    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 2) as pct_of_orders
+FROM order_size
+GROUP BY basket_size
+ORDER BY 
+    CASE basket_size
+        WHEN '1 item' THEN 1
+        WHEN '2-3 items' THEN 2
+        WHEN '4-5 items' THEN 3
+        ELSE 4
+    END
+"""
+
+result14 = run_query(query14, "QUERY 14: Order Basket Size Analysis")
+What to pay attention to when writing:
+
+COUNT(DISTINCT product_id): Counts unique products per order (basket size)
+CASE WHEN items_count = 1: First CASE categorizes basket sizes
+COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (): Calculates percentage of total
+100.0 (with decimal) ensures floating-point division, not integer division
+Second CASE in ORDER BY ensures logical ordering (1 item, 2-3, 4-5, 6+)
+SUM(COUNT(*)) OVER (): Window function without PARTITION BY = grand total
+
+
+QUERY 15: STATE PERFORMANCE RANKINGS
+Business Context
+Business question: Which states perform best on revenue AND delivery, and how do they rank on each dimension?
+Why it matters:
+
+Identifies trade-offs (high revenue but poor delivery = fix logistics)
+Finds balanced performers (good revenue + good delivery = scale these)
+Highlights problem states (low revenue + poor delivery = deprioritize or fix)
+Enables resource allocation (warehouse placement based on dual rankings)
+Useful for regional manager performance evaluation
+
+SQL approach:
+
+Join orders + customers + payments (3-table join)
+Group by state to get revenue and delivery metrics
+Use RANK() OVER (ORDER BY revenue DESC) for revenue ranking
+Use RANK() OVER (ORDER BY delivery ASC) for delivery ranking (lower is better)
+Display both rankings side-by-side for comparison
+
+What to look for in results:
+
+Which states rank high on BOTH dimensions? (investment priorities)
+Which states have large gaps between rankings? (revenue strong, delivery weak = logistics problem)
+Are top revenue states also top delivery states? (Correlation analysis)
+States with low revenue rank but high delivery rank (underutilized potential)
+
+
+python# CELL 6: Query 15 - State Performance Rankings
+query15 = """
+SELECT 
+    c.customer_state,
+    COUNT(DISTINCT o.order_id) as total_orders,
+    ROUND(SUM(p.total_payment_value), 2) as total_revenue,
+    ROUND(AVG(o.delivery_time_days), 1) as avg_delivery_days,
+    RANK() OVER (ORDER BY SUM(p.total_payment_value) DESC) as revenue_rank,
+    RANK() OVER (ORDER BY AVG(o.delivery_time_days) ASC) as delivery_rank
+FROM orders o
+JOIN customers c ON o.customer_id = c.customer_id
+JOIN order_payments p ON o.order_id = p.order_id
+WHERE o.delivery_time_days IS NOT NULL
+GROUP BY c.customer_state
+ORDER BY revenue_rank
+"""
+
+result15 = run_query(query15, "QUERY 15: State Performance Rankings")
+What to pay attention to when writing:
+
+RANK() OVER (ORDER BY ... DESC): Revenue ranking (higher revenue = better rank = rank 1)
+RANK() OVER (ORDER BY ... ASC): Delivery ranking (lower days = better rank = rank 1)
+Must use aggregate functions in ORDER BY within window functions
+WHERE delivery_time_days IS NOT NULL: Filters out incomplete deliveries before ranking
+GROUP BY c.customer_state: Aggregates to state level before ranking
+No PARTITION BY in window function = ranks across all states globally
+
+
+PART 2: SAVE QUERIES TO SQL FILE (30 minutes)
+python# CELL 7: Export all queries to .sql file
+queries_sql = """-- E-COMMERCE ANALYSIS - ADVANCED SQL QUERIES
+-- Database: ecommerce.db
+-- Date: January 6, 2026
+-- Author: [Your Name]
+
+-- ============================================================
+-- QUERY 11: Running Total Revenue by Month
+-- Purpose: Calculate cumulative revenue growth over time
+-- Technique: Window function (SUM OVER with frame specification)
+-- ============================================================
+
+{q11}
+
+-- ============================================================
+-- QUERY 12: Customer Value Segmentation
+-- Purpose: Segment customers by lifetime value (High/Medium/Low)
+-- Technique: Common Table Expressions (CTEs)
+-- ============================================================
+
+{q12}
+
+-- ============================================================
+-- QUERY 13: Monthly Customer Acquisition Cohorts
+-- Purpose: Track new customer acquisition by month with cumulative total
+-- Technique: CTE + window function for running sum
+-- ============================================================
+
+{q13}
+
+-- ============================================================
+-- QUERY 14: Order Basket Size Analysis
+-- Purpose: Analyze distribution of items per order
+-- Technique: Subquery + CASE WHEN categorization + percentage calculation
+-- ============================================================
+
+{q14}
+
+-- ============================================================
+-- QUERY 15: State Performance Rankings
+-- Purpose: Rank states by revenue and delivery performance simultaneously
+-- Technique: Multiple RANK() window functions
+-- ============================================================
+
+{q15}
+""".format(
+    q11=query11, 
+    q12=query12, 
+    q13=query13, 
+    q14=query14, 
+    q15=query15
+)
+
+# Save to file
+with open('../sql/advanced_queries.sql', 'w') as f:
+    f.write(queries_sql)
+
+print("\n" + "=" * 70)
+print("All queries saved to: sql/advanced_queries.sql")
+print("=" * 70)
+What to pay attention to when writing:
+
+.format() method injects query variables into template string
+{q11}, {q12} placeholders get replaced with actual query text
+File path: ../sql/advanced_queries.sql (parent directory, then sql folder)
+'w' mode overwrites file if it exists (use 'a' to append instead)
+
+
+PART 3: END-OF-DAY ANALYSIS (60 minutes)
+python# CELL 8: Cross-query insights
+
+print("\n" + "=" * 70)
+print("DAY 6: BUSINESS INSIGHTS ACROSS ALL ADVANCED QUERIES")
+print("=" * 70)
+
+# Insight 1: Revenue growth rate analysis
+print("\n" + "-" * 70)
+print("INSIGHT 1: REVENUE GROWTH TRAJECTORY")
+print("-" * 70)
+
+# Calculate month-over-month growth from Query 11 results
+result11['prev_month_revenue'] = result11['monthly_revenue'].shift(1)
+result11['mom_growth_pct'] = (
+    (result11['monthly_revenue'] - result11['prev_month_revenue']) / 
+    result11['prev_month_revenue'] * 100
+).round(2)
+
+print("\nMonth-over-month growth rates:")
+print(result11[['order_year', 'order_month', 'monthly_revenue', 'mom_growth_pct']].tail(12).to_string(index=False))
+
+peak_growth_month = result11.loc[result11['mom_growth_pct'].idxmax()]
+worst_growth_month = result11.loc[result11['mom_growth_pct'].idxmin()]
+
+print(f"\nPeak growth month: {peak_growth_month['order_year']}-{peak_growth_month['order_month']:02.0f}")
+print(f"  Growth: {peak_growth_month['mom_growth_pct']:.1f}%")
+print(f"  Revenue: R$ {peak_growth_month['monthly_revenue']:,.2f}")
+
+print(f"\nWorst growth month: {worst_growth_month['order_year']}-{worst_growth_month['order_month']:02.0f}")
+print(f"  Growth: {worst_growth_month['mom_growth_pct']:.1f}%")
+print(f"  Revenue: R$ {worst_growth_month['monthly_revenue']:,.2f}")
+
+# Insight 2: Customer segment economics
+print("\n" + "-" * 70)
+print("INSIGHT 2: CUSTOMER SEGMENT ECONOMICS")
+print("-" * 70)
+
+total_customers = result12['customer_count'].sum()
+total_revenue = result12['total_segment_revenue'].sum()
+
+result12['pct_of_customers'] = (result12['customer_count'] / total_customers * 100).round(2)
+result12['pct_of_revenue'] = (result12['total_segment_revenue'] / total_revenue * 100).round(2)
+
+print("\nSegment distribution:")
+print(result12[['value_segment', 'customer_count', 'pct_of_customers', 
+                'total_segment_revenue', 'pct_of_revenue']].to_string(index=False))
+
+high_value = result12[result12['value_segment'] == 'High Value'].iloc[0]
+low_value = result12[result12['value_segment'] == 'Low Value'].iloc[0]
+
+ltv_multiplier = high_value['avg_ltv'] / low_value['avg_ltv']
+
+print(f"\nHigh-value customers are {ltv_multiplier:.1f}x more valuable than low-value")
+print(f"But represent only {high_value['pct_of_customers']:.2f}% of customer base")
+print(f"Yet contribute {high_value['pct_of_revenue']:.2f}% of total revenue")
+
+# Insight 3: Acquisition vs retention
+print("\n" + "-" * 70)
+print("INSIGHT 3: ACQUISITION TRENDS")
+print("-" * 70)
+
+# Calculate acquisition growth rate
+result13['prev_month_acq'] = result13['customers_acquired'].shift(1)
+result13['acq_growth_pct'] = (
+    (result13['customers_acquired'] - result13['prev_month_acq']) / 
+    result13['prev_month_acq'] * 100
+).round(2)
+
+print("\nLast 12 months customer acquisition:")
+print(result13[['cohort_month', 'customers_acquired', 'cumulative_customers', 'acq_growth_pct']].tail(12).to_string(index=False))
+
+avg_monthly_acquisition = result13['customers_acquired'].mean()
+peak_acquisition_month = result13.loc[result13['customers_acquired'].idxmax()]
+
+print(f"\nAverage monthly acquisition: {avg_monthly_acquisition:.0f} customers")
+print(f"Peak acquisition month: {peak_acquisition_month['cohort_month']}")
+print(f"  Customers acquired: {peak_acquisition_month['customers_acquired']:.0f}")
+print(f"  Cumulative total: {peak_acquisition_month['cumulative_customers']:.0f}")
+
+# Insight 4: Basket behavior
+print("\n" + "-" * 70)
+print("INSIGHT 4: BASKET SIZE ECONOMICS")
+print("-" * 70)
+
+print("\nBasket size distribution:")
+print(result14.to_string(index=False))
+
+single_item_pct = result14[result14['basket_size'] == '1 item']['pct_of_orders'].values[0]
+single_item_aov = result14[result14['basket_size'] == '1 item']['avg_order_value'].values[0]
+
+multi_item = result14[result14['basket_size'] != '1 item']
+multi_item_avg_aov = multi_item['avg_order_value'].mean()
+
+aov_uplift = ((multi_item_avg_aov - single_item_aov) / single_item_aov * 100)
+
+print(f"\n{single_item_pct:.1f}% of orders contain only 1 item")
+print(f"Single-item AOV: R$ {single_item_aov:.2f}")
+print(f"Multi-item AOV: R$ {multi_item_avg_aov:.2f}")
+print(f"AOV uplift from cross-sell: {aov_uplift:.1f}%")
+
+# Insight 5: State performance gaps
+print("\n" + "-" * 70)
+print("INSIGHT 5: STATE PERFORMANCE GAPS")
+print("-" * 70)
+
+# Find states with big ranking gaps
+result15['rank_gap'] = abs(result15['revenue_rank'] - result15['delivery_rank'])
+top_gap_states = result15.nlargest(5, 'rank_gap')
+
+print("\nTop 5 states with largest performance gaps:")
+print(top_gap_states[['customer_state', 'revenue_rank', 'delivery_rank', 'rank_gap']].to_string(index=False))
+
+print("\nInterpretation:")
+print("Large gaps indicate:")
+print("  - High revenue + poor delivery = Fix logistics")
+print("  - Low revenue + good delivery = Untapped potential")
+
+# Summary statistics
+print("\n" + "=" * 70)
+print("DAY 6 COMPLETE - SUMMARY STATISTICS")
+print("=" * 70)
+
+print("\nAdvanced SQL techniques demonstrated:")
+print("  1. Window functions (running totals, rankings)")
+print("  2. Common Table Expressions (multi-step logic)")
+print("  3. Date manipulation (cohort analysis)")
+print("  4. Percentage calculations (distribution analysis)")
+print("  5. Multiple simultaneous rankings")
+
+print("\nQueries written:")
+print("  - Query 11: Running total revenue")
+print("  - Query 12: Customer LTV segmentation")
+print("  - Query 13: Customer acquisition cohorts")
+print("  - Query 14: Basket size analysis")
+print("  - Query 15: State performance rankings")
+
+print("\nFiles created:")
+print("  - notebooks/05_advanced_sql.ipynb")
+print("  - sql/advanced_queries.sql")
+
+print("\n" + "=" * 70)
+print("KEY FINDINGS SUMMARY")
+print("=" * 70)
+
+# Finding 1: Revenue growth
+final_running_total = result11.iloc[-1]['running_total_revenue']
+print(f"\n1. REVENUE TRAJECTORY")
+print(f"   Total cumulative revenue: R$ {final_running_total:,.2f}")
+print(f"   Peak growth month: {peak_growth_month['order_year']}-{peak_growth_month['order_month']:02.0f} ({peak_growth_month['mom_growth_pct']:.1f}% MoM growth)")
+print(f"   Recent trend: {result11['mom_growth_pct'].tail(3).mean():.1f}% average growth (last 3 months)")
+
+# Finding 2: Customer value concentration
+print(f"\n2. CUSTOMER VALUE CONCENTRATION")
+print(f"   High-value customers: {high_value['pct_of_customers']:.2f}% of base, {high_value['pct_of_revenue']:.2f}% of revenue")
+print(f"   Average high-value LTV: R$ {high_value['avg_ltv']:,.2f}")
+print(f"   Value multiplier: {ltv_multiplier:.1f}x (high vs low)")
+
+# Finding 3: Acquisition efficiency
+total_acquired = result13['customers_acquired'].sum()
+print(f"\n3. CUSTOMER ACQUISITION")
+print(f"   Total customers acquired: {total_acquired:,.0f}")
+print(f"   Average monthly acquisition: {avg_monthly_acquisition:.0f} customers")
+print(f"   Peak month: {peak_acquisition_month['cohort_month']} ({peak_acquisition_month['customers_acquired']:.0f} customers)")
+
+# Finding 4: Cross-sell opportunity
+print(f"\n4. CROSS-SELL OPPORTUNITY")
+print(f"   Single-item orders: {single_item_pct:.1f}% of total")
+print(f"   AOV uplift potential: {aov_uplift:.1f}% (if single-item → multi-item)")
+print(f"   Revenue opportunity: R$ {(single_item_aov * aov_uplift / 100) * (result14[result14['basket_size'] == '1 item']['order_count'].values[0]):,.2f}")
+
+# Finding 5: Regional optimization
+print(f"\n5. REGIONAL PERFORMANCE")
+print(f"   States analyzed: {len(result15)}")
+print(f"   Largest performance gap: {top_gap_states.iloc[0]['customer_state']} (gap of {top_gap_states.iloc[0]['rank_gap']:.0f} ranks)")
+print(f"   States needing attention: {len(result15[result15['rank_gap'] > 10])}")
+
+print("\n" + "=" * 70)
+print("STRATEGIC RECOMMENDATIONS")
+print("=" * 70)
+
+print("\n1. REVENUE GROWTH STRATEGY")
+print("   Action: Replicate success factors from peak growth month")
+print("   Expected impact: +15-20% MoM growth in targeted months")
+
+print("\n2. CUSTOMER RETENTION FOCUS")
+print("   Action: Move 10% of low-value to medium-value through engagement")
+print("   Expected impact: +R$ 500K annual revenue")
+
+print("\n3. ACQUISITION OPTIMIZATION")
+print("   Action: Invest in channels driving peak acquisition months")
+print("   Expected impact: +20% monthly acquisition rate")
+
+print("\n4. CROSS-SELL PROGRAM")
+print(f"   Action: Bundle recommendations for single-item orders")
+print(f"   Expected impact: +{aov_uplift:.0f}% AOV on 30% of single-item orders")
+print(f"   Revenue potential: R$ {(single_item_aov * aov_uplift / 100) * (result14[result14['basket_size'] == '1 item']['order_count'].values[0]) * 0.30:,.2f}")
+
+print("\n5. REGIONAL RESOURCE ALLOCATION")
+print("   Action: Fix logistics in high-revenue, poor-delivery states")
+print("   Expected impact: 10-15% delivery time reduction")
+
+print("\n" + "=" * 70)
+print("NEXT STEPS: DAY 7")
+print("=" * 70)
+print("  - Create comprehensive README documentation")
+print("  - Prepare visualization data for Streamlit (Week 2)")
+print("  - Export query results to CSV for dashboarding")
+print("  - Update LinkedIn profile with project progress")
+print("  - Git commit: 'Day 6 complete - Advanced SQL mastery'")
+
+# Close database connection
+conn.close()
+print("\nDatabase connection closed")
+print("=" * 70)
+What to pay attention to when writing:
+
+.shift(1): Moves values down one row (for MoM calculations)
+.idxmax(): Returns index of maximum value (not the value itself)
+.iloc[0]: Accesses first row of filtered dataframe
+.values[0]: Extracts scalar value from single-element array
+abs(): Absolute value (for ranking gap calculation)
+.nlargest(5, 'column'): Returns top 5 rows by column value
+String formatting: f"{value:.1f}" means 1 decimal place
+
+
+GIT COMMIT
+bashgit add .
+git commit -m "Day 6: Advanced SQL queries complete
+
+- Running total revenue with window functions
+- Customer LTV segmentation using CTEs
+- Cohort analysis (customer acquisition)
+- Basket size distribution analysis
+- Multi-dimensional state rankings
+
+Skills demonstrated:
+- Window functions (SUM OVER, RANK)
+- Common Table Expressions (WITH clause)
+- Date manipulation (strftime)
+- Percentage calculations
+- Multiple simultaneous rankings
+
+Key findings:
+- High-value customers (0.05%) generate 0.2% revenue
+- 97% single-item orders = cross-sell opportunity
+- Peak growth month: [your month] with [X]% MoM growth
+- [Y] states have revenue-delivery performance gaps
+
+Files:
+- notebooks/05_advanced_sql.ipynb
+- sql/advanced_queries.sql
+
+Time: 5-6 hours"
+
+END OF DAY 6 SCRIPT
+Total Time: 5-6 hours
+Queries Written: 5 advanced SQL queries
+Techniques Mastered: Window functions, CTEs, rankings, cohort analysis
+Files Created: 2 (notebook + SQL file)
+Business Insights: 5 major findings with strategic recommendations
+Status: 85% complete with Week 1
