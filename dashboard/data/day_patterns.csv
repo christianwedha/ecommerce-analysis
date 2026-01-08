@@ -1,0 +1,8 @@
+order_day_of_week,day_name,total_orders,total_revenue,avg_order_value
+0,Monday,15701,2530591.86,161.17
+1,Tuesday,15503,2474065.6,159.59
+2,Wednesday,15076,2396624.55,158.97
+3,Thursday,14322,2284158.44,159.49
+4,Friday,13685,2222878.71,162.43
+5,Saturday,10555,1706107.53,161.64
+6,Sunday,11635,1808035.08,155.4
